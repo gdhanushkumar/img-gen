@@ -1,40 +1,50 @@
-import altair as alt
-import numpy as np
-import pandas as pd
+import mediapy as media
+import random
+import sys
+import torch
 import streamlit as st
+from diffusers import DiffusionPipeline, TCDScheduler
+from huggingface_hub import hf_hub_download
+from PIL import Image
+import io
 
-"""
-# Welcome to Streamlit!
+# Define the function to generate the image
+def generate_image(prompt):
+    num_inference_steps = 8
+    base_model_id = "stabilityai/stable-diffusion-xl-base-1.0"
+    repo_name = "ByteDance/Hyper-SD"
+    plural = "s" if num_inference_steps > 1 else ""
+    ckpt_name = f"Hyper-SDXL-{num_inference_steps}step{plural}-lora.safetensors"
+    device = "cpu"  # Change to CPU
 
-Edit `/streamlit_app.py` to customize this app to your heart's desire :heart:.
-If you have any questions, checkout our [documentation](https://docs.streamlit.io) and [community
-forums](https://discuss.streamlit.io).
+    pipe = DiffusionPipeline.from_pretrained(base_model_id, torch_dtype=torch.float32).to(device)
+    pipe.load_lora_weights(hf_hub_download(repo_name, ckpt_name))
+    pipe.fuse_lora()
+    pipe.scheduler = TCDScheduler.from_config(pipe.scheduler.config)
 
-In the meantime, below is an example of what you can do with just a few lines of code:
-"""
+    seed = random.randint(0, sys.maxsize)
+    eta = 0.5
 
-num_points = st.slider("Number of points in spiral", 1, 10000, 1100)
-num_turns = st.slider("Number of turns in spiral", 1, 300, 31)
+    images = pipe(
+        prompt=prompt,
+        num_inference_steps=num_inference_steps,
+        guidance_scale=0.0,
+        eta=eta,
+        generator=torch.Generator(device).manual_seed(seed),
+    ).images
 
-indices = np.linspace(0, 1, num_points)
-theta = 2 * np.pi * num_turns * indices
-radius = indices
+    return images[0], seed
 
-x = radius * np.cos(theta)
-y = radius * np.sin(theta)
+st.title("Image Generation from Prompt")
 
-df = pd.DataFrame({
-    "x": x,
-    "y": y,
-    "idx": indices,
-    "rand": np.random.randn(num_points),
-})
+prompt = st.text_input("Enter a prompt for image generation:")
 
-st.altair_chart(alt.Chart(df, height=700, width=700)
-    .mark_point(filled=True)
-    .encode(
-        x=alt.X("x", axis=None),
-        y=alt.Y("y", axis=None),
-        color=alt.Color("idx", legend=None, scale=alt.Scale()),
-        size=alt.Size("rand", legend=None, scale=alt.Scale(range=[1, 150])),
-    ))
+if st.button("Generate Image"):
+    if prompt:
+        with st.spinner("Generating image..."):
+            image, seed = generate_image(prompt)
+            st.image(image, caption=f"Generated image for prompt: {prompt}")
+            st.write(f"Prompt: {prompt}")
+            st.write(f"Seed: {seed}")
+    else:
+        st.write("Please enter a prompt")
